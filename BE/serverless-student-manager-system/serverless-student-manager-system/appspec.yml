@@ -1,0 +1,35 @@
+# AWS CodeDeploy appspec.yml
+# File này được CodeDeploy sử dụng để deploy ứng dụng
+
+version: 0.0
+os: linux
+
+files:
+  - source: target/demo-0.0.1-SNAPSHOT.jar
+    destination: /opt/student-manager/
+
+hooks:
+  BeforeInstall:
+    - location: scripts/before_install.sh
+      timeout: 300
+      runas: root
+
+  AfterInstall:
+    - location: scripts/after_install.sh
+      timeout: 300
+      runas: root
+
+  ApplicationStart:
+    - location: scripts/start_server.sh
+      timeout: 300
+      runas: root
+
+  ApplicationStop:
+    - location: scripts/stop_server.sh
+      timeout: 300
+      runas: root
+
+  ValidateService:
+    - location: scripts/validate_service.sh
+      timeout: 300
+      runas: root

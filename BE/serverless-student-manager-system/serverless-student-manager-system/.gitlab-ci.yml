@@ -1,0 +1,195 @@
+# GitLab CI/CD Pipeline for AWS CodePipeline Integration
+# Architecture: GitLab → S3 → CodePipeline → CodeBuild → CodeDeploy/Lambda
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository"
+  AWS_DEFAULT_REGION: "ap-southeast-1" # Thay đổi theo region của bạn
+  ECR_REPOSITORY: "student-manager-system"
+  S3_BUCKET: "student-manager-artifacts" # S3 bucket để lưu artifacts
+  APP_NAME: "student-manager-system"
+
+stages:
+  - build
+  - test
+  - package
+  - deploy-staging
+  - deploy-production
+
+cache:
+  paths:
+    - .m2/repository/
+    - target/
+
+# ==================== BUILD STAGE ====================
+build:
+  stage: build
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Building Spring Boot application..."
+    - mvn clean compile -DskipTests
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+  only:
+    - main
+    - develop
+    - merge_requests
+
+# ==================== TEST STAGE ====================
+unit-tests:
+  stage: test
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Running unit tests..."
+    - mvn test
+  artifacts:
+    reports:
+      junit: target/surefire-reports/*.xml
+    paths:
+      - target/surefire-reports/
+  coverage: "/Total.*?([0-9]{1,3})%/"
+  only:
+    - main
+    - develop
+    - merge_requests
+
+security-scan:
+  stage: test
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Running security scan..."
+    - mvn dependency-check:check || true
+  allow_failure: true
+  only:
+    - main
+    - develop
+
+# ==================== PACKAGE STAGE ====================
+package-jar:
+  stage: package
+  image: maven:3.8.6-openjdk-17
+  script:
+    - echo "Packaging application..."
+    - mvn package -DskipTests
+    - echo "JAR file created: target/*.jar"
+  artifacts:
+    paths:
+      - target/*.jar
+      - appspec.yml
+      - scripts/
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+
+build-docker:
+  stage: package
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - apk add --no-cache aws-cli
+    - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+  script:
+    - echo "Building Docker image..."
+    - docker build -t $ECR_REPOSITORY:$CI_COMMIT_SHA -t $ECR_REPOSITORY:latest .
+    - docker tag $ECR_REPOSITORY:$CI_COMMIT_SHA $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY:$CI_COMMIT_SHA
+    - docker tag $ECR_REPOSITORY:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY:latest
+    - echo "Pushing to ECR..."
+    - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY:$CI_COMMIT_SHA
+    - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$ECR_REPOSITORY:latest
+  only:
+    - main
+  when: manual
+
+# ==================== DEPLOY STAGING ====================
+deploy-staging:
+  stage: deploy-staging
+  image:
+    name: amazon/aws-cli:2.13.0
+    entrypoint: [""]
+  environment:
+    name: staging
+    url: https://staging-api.your-domain.com
+  before_script:
+    - yum install -y zip
+  script:
+    - echo "Uploading artifacts to S3 for CodePipeline..."
+    # Tạo deployment package
+    - zip -r deployment-package.zip target/*.jar appspec.yml scripts/ buildspec.yml
+    # Upload lên S3 để trigger CodePipeline
+    - aws s3 cp deployment-package.zip s3://$S3_BUCKET/staging/$CI_COMMIT_SHA/deployment-package.zip
+    # Trigger CodePipeline (optional - nếu không dùng S3 event trigger)
+    - aws codepipeline start-pipeline-execution --name student-manager-staging-pipeline || true
+    - echo "Deployment triggered for staging environment"
+  only:
+    - develop
+  dependencies:
+    - package-jar
+
+# ==================== DEPLOY PRODUCTION ====================
+deploy-production:
+  stage: deploy-production
+  image:
+    name: amazon/aws-cli:2.13.0
+    entrypoint: [""]
+  environment:
+    name: production
+    url: https://api.your-domain.com
+  before_script:
+    - yum install -y zip
+  script:
+    - echo "Uploading artifacts to S3 for Production CodePipeline..."
+    # Tạo deployment package
+    - zip -r deployment-package.zip target/*.jar appspec.yml scripts/ buildspec.yml
+    # Upload lên S3
+    - aws s3 cp deployment-package.zip s3://$S3_BUCKET/production/$CI_COMMIT_SHA/deployment-package.zip
+    # Update Lambda function (nếu deploy lên Lambda)
+    - |
+      if [ "$DEPLOY_TARGET" = "lambda" ]; then
+        aws lambda update-function-code \
+          --function-name $APP_NAME-production \
+          --s3-bucket $S3_BUCKET \
+          --s3-key production/$CI_COMMIT_SHA/deployment-package.zip
+      fi
+    # Trigger CodePipeline cho production
+    - aws codepipeline start-pipeline-execution --name student-manager-production-pipeline || true
+    - echo "Production deployment triggered"
+  only:
+    - main
+  when: manual
+  dependencies:
+    - package-jar
+
+# ==================== ROLLBACK JOB ====================
+rollback-production:
+  stage: deploy-production
+  image:
+    name: amazon/aws-cli:2.13.0
+    entrypoint: [""]
+  script:
+    - echo "Rolling back to previous version..."
+    - aws codedeploy stop-deployment --deployment-id $DEPLOYMENT_ID || true
+    - aws codedeploy create-deployment \
+      --application-name $APP_NAME \
+      --deployment-group-name production \
+      --revision revisionType=S3,s3Location={bucket=$S3_BUCKET,key=production/previous/deployment-package.zip,bundleType=zip}
+  when: manual
+  only:
+    - main
+
+# ==================== CLEANUP ====================
+cleanup-old-artifacts:
+  stage: .post
+  image:
+    name: amazon/aws-cli:2.13.0
+    entrypoint: [""]
+  script:
+    - echo "Cleaning up old artifacts from S3..."
+    - aws s3 rm s3://$S3_BUCKET/staging/ --recursive --exclude "*" --include "*/deployment-package.zip" --older-than 7d || true
+  only:
+    - schedules
+  when: always

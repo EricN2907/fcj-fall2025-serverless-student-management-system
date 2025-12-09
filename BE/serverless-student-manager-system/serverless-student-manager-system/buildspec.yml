@@ -1,0 +1,60 @@
+# AWS CodeBuild buildspec.yml
+# File này được CodeBuild sử dụng khi pipeline được trigger
+
+version: 0.2
+
+env:
+  variables:
+    JAVA_HOME: "/usr/lib/jvm/java-17-amazon-corretto"
+  parameter-store:
+    AWS_COGNITO_USER_POOL_ID: "/student-manager/cognito/user-pool-id"
+    AWS_COGNITO_CLIENT_ID: "/student-manager/cognito/client-id"
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+    commands:
+      - echo "Installing dependencies..."
+      - java -version
+      - mvn -version
+
+  pre_build:
+    commands:
+      - echo "Pre-build phase started on $(date)"
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/student-manager-system
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+
+  build:
+    commands:
+      - echo "Build started on $(date)"
+      - echo "Building Spring Boot application..."
+      - mvn clean package -DskipTests
+      - echo "Building Docker image..."
+      - docker build -t $REPOSITORY_URI:latest .
+      - docker tag $REPOSITORY_URI:latest $REPOSITORY_URI:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+      - echo "Pushing Docker image to ECR..."
+      - docker push $REPOSITORY_URI:latest
+      - docker push $REPOSITORY_URI:$IMAGE_TAG
+      - echo "Writing image definitions file..."
+      - printf '[{"name":"student-manager-container","imageUri":"%s"}]' $REPOSITORY_URI:$IMAGE_TAG > imagedefinitions.json
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - target/*.jar
+    - appspec.yml
+    - scripts/**/*
+    - imagedefinitions.json
+  discard-paths: no
+
+cache:
+  paths:
+    - "/root/.m2/**/*"
