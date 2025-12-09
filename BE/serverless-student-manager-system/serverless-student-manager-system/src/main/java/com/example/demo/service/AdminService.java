@@ -94,27 +94,18 @@ public class AdminService {
         } catch (CognitoIdentityProviderException e) {
             throw new RuntimeException("Lỗi Cognito: " + e.awsErrorDetails().errorMessage());
         }
-
-        // 4. LƯU DYNAMODB (Giữ nguyên - Code này ok)
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-        // LOGIC ID MỚI: Nếu có codeUser (SE182088) thì dùng làm ID luôn.
-        // Giúp dễ tìm kiếm và khớp với seed data.
         String finalId;
         if (request.getCodeUser() != null && !request.getCodeUser().isEmpty()) {
             finalId = request.getCodeUser().toUpperCase(); // Ví dụ: SE182088
         } else {
             finalId = UUID.randomUUID().toString(); // Fallback nếu không nhập mã
         }
-
         SchoolItem newItem = new SchoolItem();
-
-        // Mapping Keys
         newItem.setPk("USER#" + finalId); // PK: USER#SE182088
         newItem.setSk("PROFILE");
         newItem.setGsi1Pk(role.getSearchKey());
         newItem.setGsi1Sk("NAME#" + request.getName().toLowerCase());
-
-        // Mapping Data
         newItem.setId(finalId);
         newItem.setName(request.getName());
         newItem.setEmail(request.getEmail());
@@ -134,65 +125,40 @@ public class AdminService {
 
     public SubjectDto updateSubject(String codeSubject, UpdateSubjectDto request) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-        // 1. Tìm Item dựa trên ID từ URL
-        // PK = SUBJECT#SWP391
         String pk = "SUBJECT#" + codeSubject;
         Key key = Key.builder().partitionValue(pk).sortValue("INFO").build();
-
         SchoolItem item = table.getItem(key);
-
         if (item == null) {
             throw new IllegalArgumentException("Không tìm thấy môn học có mã: " + codeSubject);
         }
-
-        // 2. Cập nhật các trường thông tin (Chỉ update nếu có gửi lên)
         boolean isNameChanged = false;
-
         if (request.getName() != null && !request.getName().isEmpty()) {
             item.setName(request.getName());
             isNameChanged = true;
         }
-
         if (request.getCredits() != null) item.setCredits(request.getCredits());
         if (request.getDescription() != null) item.setDescription(request.getDescription());
         if (request.getDepartment() != null) item.setDepartment(request.getDepartment());
         if (request.getStatus() != null) item.setStatus(request.getStatus());
-
-        // 3. QUAN TRỌNG: Đồng bộ dữ liệu Search (GSI1SK)
-        // Nếu Admin sửa tên môn, ta phải sửa lại key tìm kiếm để API Search hoạt động đúng
         if (isNameChanged) {
-            // VD: Sửa tên thành "Đồ án tốt nghiệp" -> GSI1SK = "NAME#do an tot nghiep"
             item.setGsi1Sk("NAME#" + request.getName().toLowerCase());
         }
-
-        // 4. Cập nhật thời gian
         item.setUpdatedAt(java.time.Instant.now().toString());
-
-        // 5. Lưu xuống DB (UpdateItem)
         table.updateItem(item);
-
         return convertToSubjectDto(item);
     }
-
     public SubjectDto getSubjectByCode(String codeSubject) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
         Key key = Key.builder()
                 .partitionValue("SUBJECT#" + codeSubject)
                 .sortValue("INFO")
                 .build();
-
-        // 2. Gọi lệnh GetItem (Nhanh nhất trong DynamoDB)
         SchoolItem item = table.getItem(key);
-
-        // 3. Kiểm tra tồn tại
         if (item == null) {
             throw new IllegalArgumentException("Không tìm thấy môn học với mã: " + codeSubject);
         }
-
-        // 4. Convert sang DTO và trả về
         return convertToSubjectDto(item);
     }
-
     public SubjectDto createSubject(CreateSubjectDto request) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
         if (request.getCodeSubject() == null || request.getCodeSubject().trim().isEmpty()) {
@@ -233,27 +199,18 @@ public class AdminService {
 
     public void softDeleteSubject(String codeSubject) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-        // 1. Tạo Key để tìm (PK = SUBJECT#SWP391)
         Key key = Key.builder()
                 .partitionValue("SUBJECT#" + codeSubject)
                 .sortValue("INFO")
                 .build();
-
-        // 2. Lấy item lên để kiểm tra
         SchoolItem item = table.getItem(key);
 
         if (item == null) {
             throw new IllegalArgumentException("Không tìm thấy môn học: " + codeSubject);
         }
-
-        // 3. Thực hiện Soft Delete (Sửa status = 0)
         item.setStatus(0);
         item.setUpdatedAt(java.time.Instant.now().toString());
-
-        // 4. Update lại vào DB
         table.updateItem(item);
-
-        // 5. TODO: Ghi log vào bảng activity_logs (Nếu bạn đã tạo bảng đó)
         System.out.println("LOG: Admin đã xóa mềm môn học " + codeSubject);
     }
 
@@ -273,14 +230,11 @@ public class AdminService {
         List<SchoolItem> items = new ArrayList<>();
         if (roleId != null) {
             String roleKey = Role.fromId(roleId).getSearchKey();
-
             QueryConditional queryConditional = QueryConditional.keyEqualTo(k -> k.partitionValue(roleKey));
-
             var queryRequest = software.amazon.awssdk.enhanced.dynamodb.model.QueryEnhancedRequest.builder()
                     .queryConditional(queryConditional)
                     .filterExpression(filterExpression) // Gắn bộ lọc keyword
                     .build();
-
             for (Page<SchoolItem> page : index.query(queryRequest)) {
                 items.addAll(page.items());
             }
@@ -291,19 +245,14 @@ public class AdminService {
             if (filterExpression != null) {
                 scanBuilder.filterExpression(filterExpression);
             }
-
-            // Thực hiện scan
             for (Page<SchoolItem> page : table.scan(scanBuilder.build())) {
                 for (SchoolItem item : page.items()) {
-                    // Chỉ lấy những dòng là User (có PK bắt đầu bằng USER#)
                     if (item.getPk() != null && item.getPk().startsWith("USER#")) {
                         items.add(item);
                     }
                 }
             }
         }
-
-        // 3. Convert sang DTO
         return items.stream()
                 .map(this::convertToUserDto) // Hàm helper ở cuối file AdminService
                 .collect(Collectors.toList());
@@ -312,66 +261,43 @@ public class AdminService {
     public List<ClassDto> searchClasses(String subjectId, String teacherId, String keyword, Integer status) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
         DynamoDbIndex<SchoolItem> index = table.index("GSI1");
-
-        // 1. QUERY: Lấy tất cả CLASS
         QueryConditional queryConditional = QueryConditional.keyEqualTo(k -> k.partitionValue("TYPE#CLASS"));
-
-        // 2. FILTER EXPRESSION
         List<String> expressions = new ArrayList<>();
         Map<String, AttributeValue> values = new HashMap<>();
-        Map<String, String> names = new HashMap<>(); // <--- Map dùng để alias tên biến trùng từ khóa
-
-        // a. Lọc Subject
+        Map<String, String> names = new HashMap<>();
         if (subjectId != null && !subjectId.isEmpty()) {
             String subKey = subjectId.startsWith("SUBJECT#") ? subjectId : "SUBJECT#" + subjectId;
             expressions.add("subject_id = :subId");
             values.put(":subId", AttributeValue.builder().s(subKey).build());
         }
-
-        // b. Lọc Teacher
         if (teacherId != null && !teacherId.isEmpty()) {
             String teachKey = teacherId.startsWith("USER#") ? teacherId : "USER#" + teacherId;
             expressions.add("teacher_id = :teachId");
             values.put(":teachId", AttributeValue.builder().s(teachKey).build());
         }
-
-        // c. Lọc Status (SỬA: Dùng alias #st vì 'status' là reserved word)
         if (status != null) {
             expressions.add("#st = :status");
             values.put(":status", AttributeValue.builder().n(String.valueOf(status)).build());
             names.put("#st", "status");
         }
-
-        // d. Lọc Keyword (SỬA QUAN TRỌNG TẠI ĐÂY)
-        // Lỗi cũ: filter trên GSI1SK -> Bị cấm.
-        // Sửa mới: filter trên 'name'. Dùng alias #n vì 'name' là reserved word.
         if (keyword != null && !keyword.isEmpty()) {
             expressions.add("contains(#n, :kw)");
-            // Lưu ý: Filter trên 'name' sẽ phân biệt hoa thường.
-            // Nếu data là "SE1701" thì tìm "SE" mới ra, tìm "se" không ra.
             values.put(":kw", AttributeValue.builder().s(keyword).build());
             names.put("#n", "name");
         }
-
-        // 3. TỔNG HỢP
         Expression.Builder expressionBuilder = Expression.builder();
-
         if (!expressions.isEmpty()) {
             String finalExp = String.join(" AND ", expressions);
             expressionBuilder.expression(finalExp);
             expressionBuilder.expressionValues(values);
-
-            // Nếu có dùng alias (cho name hoặc status) thì thêm vào
             if (!names.isEmpty()) {
                 expressionBuilder.expressionNames(names);
             }
         }
 
-        // 4. THỰC THI
         var queryRequestBuilder = software.amazon.awssdk.enhanced.dynamodb.model.QueryEnhancedRequest.builder()
                 .queryConditional(queryConditional)
-                .limit(1000); // Giới hạn 1000
-
+                .limit(1000);
         if (!expressions.isEmpty()) {
             queryRequestBuilder.filterExpression(expressionBuilder.build());
         }
@@ -397,19 +323,14 @@ public class AdminService {
         if (classItem == null) {
             throw new IllegalArgumentException("Không tìm thấy lớp học có ID: " + classId);
         }
-
-        // --- LOGIC NOTIFICATION NÂNG CAO ---
-        // Nếu có gửi lên TeacherId mới VÀ TeacherId đó khác Teacher hiện tại
         if (request.getTeacherId() != null && !request.getTeacherId().isEmpty()) {
 
             String newTeacherPk = request.getTeacherId().startsWith("USER#")
                     ? request.getTeacherId()
                     : "USER#" + request.getTeacherId();
 
-            String oldTeacherPk = classItem.getTeacherId(); // Lấy ID giảng viên cũ
-
+            String oldTeacherPk = classItem.getTeacherId();
             if (!newTeacherPk.equals(oldTeacherPk)) {
-                // 1. Thông báo cho Giảng viên MỚI (Dùng hàm helper tổng quát)
                 createNotification(
                         table,
                         newTeacherPk,
@@ -417,8 +338,6 @@ public class AdminService {
                         "Bạn vừa được phân công dạy lớp: " + classItem.getName(),
                         "CLASS_ASSIGNMENT"
                 );
-
-                // 2. Thông báo cho Giảng viên CŨ (Nếu có)
                 if (oldTeacherPk != null && !oldTeacherPk.isEmpty()) {
                     createNotification(
                             table,
@@ -428,38 +347,28 @@ public class AdminService {
                             "CLASS_ASSIGNMENT"
                     );
                 }
-
-                // 3. Cập nhật ID mới vào lớp
                 classItem.setTeacherId(newTeacherPk);
 
             }
         }
-
-        // --- CẬP NHẬT CÁC TRƯỜNG KHÁC ---
         boolean isNameChanged = false;
         if (request.getName() != null && !request.getName().isEmpty()) {
             classItem.setName(request.getName());
             isNameChanged = true;
         }
-
         if (request.getPassword() != null) classItem.setPassword(request.getPassword());
         if (request.getSemester() != null) classItem.setSemester(request.getSemester());
         if (request.getAcademicYear() != null) classItem.setAcademicYear(request.getAcademicYear());
         if (request.getDescription() != null) classItem.setDescription(request.getDescription());
         if (request.getStatus() != null) classItem.setStatus(request.getStatus());
-
         if (isNameChanged) {
             classItem.setGsi1Sk("NAME#" + request.getName().toLowerCase());
         }
-
         classItem.setUpdatedAt(Instant.now().toString());
         table.updateItem(classItem);
-
         String detail = "Cập nhật lớp " + classItem.getName();
         if (request.getTeacherId() != null) detail += ". GV mới: " + request.getTeacherId();
-
         logActivity("ADMIN", "UPDATE_CLASS", detail, classId);
-
         return convertToClassDto(classItem);
     }
 
@@ -473,15 +382,12 @@ public class AdminService {
             throw new IllegalArgumentException("Không tìm thấy lớp học có ID: " + classId);
         }
 
-        // Soft Delete: Chỉ set status về 0
         classItem.setStatus(0);
         classItem.setUpdatedAt(Instant.now().toString());
         logActivity("ADMIN", "DEACTIVATE_CLASS", "Đã hủy hoạt động lớp: " + classItem.getName(), classId);
         table.updateItem(classItem);
     }
-    // ========================================================================
-    // DEACTIVATE USER (Ban User)
-    // ========================================================================
+
     public void deactivateUser(String userId) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
         String pk = userId.startsWith("USER#") ? userId : "USER#" + userId;
@@ -491,43 +397,25 @@ public class AdminService {
         if (userItem == null) {
             throw new IllegalArgumentException("Không tìm thấy user với ID: " + userId);
         }
-
         userItem.setStatus(0);
         userItem.setUpdatedAt(Instant.now().toString());
         table.updateItem(userItem);
-
-        // --- [THÊM DÒNG NÀY] GHI LOG ---
-        // Tham số: (Người thực hiện, Loại hành động, Chi tiết, ID lớp liên quan)
-        // Ở đây mình tạm để actor là "ADMIN", thực tế bạn có thể lấy ID từ Token
         logActivity("ADMIN", "DEACTIVATE_USER", "Đã khóa tài khoản: " + userItem.getEmail(), null);
     }
     //
 
     public void updateStatusId(String userId, int status) {
-        // 1. Kết nối bảng
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-
-        // 2. Xử lý ID: Đảm bảo luôn có prefix USER#
-        // Clean ID trần trước (đề phòng user gửi USER#SE123), sau đó mới ghép chuẩn
         String cleanId = userId.replace("USER#", "").trim();
         String pk = "USER#" + cleanId;
-
-        // 3. Tìm User
         Key key = Key.builder().partitionValue(pk).sortValue("PROFILE").build();
         SchoolItem userItem = table.getItem(key);
-
         if (userItem == null) {
             throw new IllegalArgumentException("Không tìm thấy user với ID: " + cleanId);
         }
-
-        // 4. Cập nhật Status
         userItem.setStatus(status);
         userItem.setUpdatedAt(Instant.now().toString());
-
-        // 5. Lưu vào DB
         table.updateItem(userItem);
-
-        // 6. Ghi Log chuẩn xác
         String actionType = (status == 1) ? "ACTIVATE_USER" : "DEACTIVATE_USER";
         String actionDesc = (status == 1)
                 ? "Đã mở khóa tài khoản: " + userItem.getEmail()
@@ -538,25 +426,15 @@ public class AdminService {
     // ========================================================================
     // 4. API GỬI THÔNG BÁO THỦ CÔNG (MANUAL)
     // ========================================================================
-    // Thêm tham số adminId vào đầu vào
     public void sendManualNotification(String adminId, SendNotificationDto request) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-
-        // 1. Xử lý ID người nhận (thêm prefix USER# nếu chưa có)
         String userIdRaw = request.getUserId();
         String targetPk = userIdRaw.startsWith("USER#") ? userIdRaw : "USER#" + userIdRaw;
-
-        // 2. Tạo đối tượng Notification
         SchoolItem notification = new SchoolItem();
-
-        // --- Các field cơ bản ---
         notification.setPk(targetPk);
-        notification.setSk("NOTI#" + System.currentTimeMillis()); // ID duy nhất
-
+        notification.setSk("NOTI#" + System.currentTimeMillis());
         notification.setTitle(request.getTitle());
         notification.setContent(request.getContent());
-
-        // Xử lý Type: Nếu DTO không gửi type thì mặc định là SYSTEM_ALERT
         String notiType = (request.getType() != null && !request.getType().isEmpty())
                 ? request.getType()
                 : "SYSTEM_ALERT";
