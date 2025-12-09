@@ -1,0 +1,37 @@
+/* Toast notifications styling */
+:root {
+  --toast-z-index: 9999;
+}
+
+/* Ensure toast container has proper z-index */
+[data-toaster] {
+  z-index: var(--toast-z-index) !important;
+  position: fixed !important;
+}
+
+/* Toast item styling */
+[data-toast] {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  padding: 16px;
+  min-width: 300px;
+  max-width: 500px;
+  pointer-events: auto;
+}
+
+[data-toast][data-type="success"] {
+  border-left: 4px solid #10b981;
+}
+
+[data-toast][data-type="error"] {
+  border-left: 4px solid #ef4444;
+}
+
+[data-toast][data-type="warning"] {
+  border-left: 4px solid #f59e0b;
+}
+
+[data-toast][data-type="info"] {
+  border-left: 4px solid #3b82f6;
+}

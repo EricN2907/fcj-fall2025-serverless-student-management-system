@@ -1,0 +1,18 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        # Lệnh build của React Router v7
+        - npm run build
+  artifacts:
+    # QUAN TRỌNG: React Router v7 plugin output file tĩnh vào đây
+    baseDirectory: build/client
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*

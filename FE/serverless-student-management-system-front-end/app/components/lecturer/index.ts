@@ -1,0 +1,8 @@
+export { default as LecturerAssignmentTab } from './AssignmentTab'
+export { default as LecturerPostTab } from './PostTab'
+export { default as LecturerGradeTab } from './GradeTab'
+export { default as LecturerStudentTab } from './StudentTab'
+export { default as CreateAssignmentModal } from './CreateAssignmentModal'
+export { default as EditAssignmentModal } from './EditAssignmentModal'
+export { default as AssignmentDetailModal } from './AssignmentDetailModal'
+export { default as CreatePostModal } from './CreatePostModal'

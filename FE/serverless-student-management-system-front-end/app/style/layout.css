@@ -1,0 +1,64 @@
+/* Updated layout background and typography for modern appearance */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #293548 0%, #1e2633 100%);
+  color: #333333;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Override background for admin layout */
+body:has(.admin-layout) {
+  background: #f1f5f9 !important;
+}
+
+/* Admin layout specific overflow control */
+.admin-layout {
+  overflow: hidden;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: #f8f9fa;
+  position: relative;
+}
+
+.layout-content {
+  flex: 1 0 auto;
+  padding: 2rem 0;
+  background-color: #f8f9fa;
+  width: 100%;
+}
+
+/* Remove padding for login pages */
+.layout-content:has(.login-container) {
+  padding: 0;
+  background: transparent;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1rem;
+}
+
+/* Remove container padding for login pages */
+.container:has(.login-container) {
+  padding: 0;
+  max-width: none;
+  margin: 0;
+}
