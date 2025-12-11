@@ -82,22 +82,28 @@ public class SchoolService {
     public List<SchoolItem> getNotifications(String userId) {
         DynamoDbTable<SchoolItem> table = getTable();
 
-        // 1. LẤY THÔNG BÁO RIÊNG (Bắt buộc phải có UserId mới lấy được cái này)
+        // 1. LẤY THÔNG BÁO RIÊNG
         String pkUser = userId.startsWith("USER#") ? userId : "USER#" + userId;
         QueryConditional userQc = QueryConditional.sortBeginsWith(k -> k.partitionValue(pkUser).sortValue("NOTI#"));
         List<SchoolItem> userNotis = table.query(r -> r.queryConditional(userQc)).items().stream().collect(Collectors.toList());
 
-        // 2. LẤY THÔNG BÁO HỆ THỐNG (Ai cũng lấy được cái này, không cần UserId)
+        // 2. LẤY THÔNG BÁO HỆ THỐNG
         QueryConditional systemQc = QueryConditional.sortBeginsWith(k -> k.partitionValue("NOTI#SYSTEM").sortValue("NOTI#"));
         List<SchoolItem> systemNotis = table.query(r -> r.queryConditional(systemQc)).items().stream().collect(Collectors.toList());
 
-        // 3. GỘP LẠI & SẮP XẾP (Mới nhất lên đầu)
+        // 3. GỘP LẠI & SẮP XẾP (Đã fix lỗi Null)
         List<SchoolItem> allNotis = new ArrayList<>();
         allNotis.addAll(userNotis);
         allNotis.addAll(systemNotis);
 
         return allNotis.stream()
-                .sorted(Comparator.comparing(SchoolItem::getCreatedAt).reversed())
+                // --- SỬA ĐOẠN NÀY ---
+                // Nếu createdAt == null thì trả về "" (chuỗi rỗng), ngược lại lấy giá trị thật
+                // Comparator.reverseOrder() sẽ đưa ngày mới nhất lên đầu, chuỗi rỗng xuống cuối
+                .sorted(Comparator.comparing(
+                        (SchoolItem item) -> item.getCreatedAt() != null ? item.getCreatedAt() : "",
+                        Comparator.reverseOrder()
+                ))
                 .collect(Collectors.toList());
     }
 }
