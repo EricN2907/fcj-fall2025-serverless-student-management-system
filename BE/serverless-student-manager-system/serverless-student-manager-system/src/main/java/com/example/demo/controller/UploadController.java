@@ -7,12 +7,16 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -53,5 +57,31 @@ public class UploadController {
         response.put("fileKey", fileKey);     // FE dùng key này để gửi API submit
 
         return ResponseEntity.ok(response);
+    }
+    @GetMapping("/download-url")
+    public ResponseEntity<?> getDownloadUrl(@RequestParam String fileKey) {
+        try {
+            // 1. Tạo yêu cầu Get Object
+            GetObjectRequest getObjectRequest = GetObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(fileKey) // Key lấy từ DB (VD: assignments/abc_123.pdf)
+                    .build();
+
+            // 2. Tạo yêu cầu Presign (Link sống 60 phút)
+            GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                    .signatureDuration(Duration.ofMinutes(60))
+                    .getObjectRequest(getObjectRequest)
+                    .build();
+
+            // 3. Sinh URL
+            PresignedGetObjectRequest presignedRequest = s3Presigner.presignGetObject(presignRequest);
+            String downloadUrl = presignedRequest.url().toString();
+
+            // 4. Trả về
+            return ResponseEntity.ok(Collections.singletonMap("downloadUrl", downloadUrl));
+
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Collections.singletonMap("error", "Không thể tạo link tải: " + e.getMessage()));
+        }
     }
 }
