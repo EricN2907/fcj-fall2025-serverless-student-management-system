@@ -2,6 +2,10 @@
 
 Hệ thống quản lý sinh viên serverless được xây dựng trên nền tảng AWS, bao gồm Backend (Spring Boot) và Frontend (React).
 
+## 🌐 Live Demo
+
+**Website**: [https://serverlessstudent.cloud](https://serverlessstudent.cloud)
+
 ## 🔗 Repository
 
 **GitLab**: [https://gitlab.com/fcj-groups](https://gitlab.com/fcj-groups)
@@ -59,7 +63,7 @@ Hệ thống quản lý sinh viên serverless được xây dựng trên nền t
 | TailwindCSS 4 | Styling |
 | Zustand | State management |
 | Axios | HTTP client |
-| AWS Amplify | AWS integration |
+| AWS Amplify | Hosting & CI/CD |
 | Vite | Build tool |
 
 ## ☁️ AWS Services
@@ -73,6 +77,10 @@ Hệ thống quản lý sinh viên serverless được xây dựng trên nền t
 | **SES** | Gửi email thông báo |
 | **API Gateway** | REST API endpoint |
 | **Lambda** | Serverless compute |
+| **Route 53** | DNS management |
+| **CloudFront + WAF** | CDN & Web Application Firewall |
+| **ACM** | SSL/TLS certificates |
+| **CloudWatch** | Giám sát API Gateway và Lambda metrics |
 
 ## 🔐 Roles & Permissions
 
