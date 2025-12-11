@@ -13,6 +13,8 @@ import com.example.demo.dto.Search.SubjectDto;
 import com.example.demo.dto.User.UserDto;
 import com.example.demo.search.SearchService;
 import com.example.demo.service.AdminService;
+import com.example.demo.service.UserService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
@@ -29,6 +31,7 @@ public class AdminController {
 
     private final AdminService adminService;
     private final SearchService searchService;
+    private final UserService userService;
 
     @PostMapping("/create-users")
     @PreAuthorize("hasRole('ADMIN')")
@@ -192,13 +195,34 @@ public class AdminController {
     }
 
     @PostMapping("/notifications")
-    public ResponseEntity<?> sendNotification(@RequestBody SendNotificationDto request, Authentication authentication) {
-        String currentAdminId = authentication.getName();
-        adminService.sendManualNotification(currentAdminId, request);
+    public ResponseEntity<?> sendNotification(
+            @RequestHeader("Authorization") String authHeader,
+            @RequestHeader(value = "user-idToken", required = true) String idToken, // Dùng cái này để lấy info Admin
+            @RequestBody SendNotificationDto request
+    ) {
+        try {
+            // 1. Lấy Email Admin từ Token (Dùng lại hàm helper getEmailFromIdToken)
+            String email = getEmailFromIdToken(idToken);
+            if (email == null) return ResponseEntity.badRequest().body(Collections.singletonMap("error", "Token không hợp lệ"));
 
-        // 3. Trả về kết quả
-        return ResponseEntity.ok(Collections.singletonMap("message", "Đã gửi thông báo thành công!"));
+            // 2. Lấy Profile Admin để lấy tên hiển thị hoặc CodeUser
+            UserDto adminProfile = userService.getMyProfile(email);
+
+            // Bạn có thể chọn lưu CodeUser (ADMIN01) hoặc Tên (Admin System) tùy ý
+            String senderName = (adminProfile != null && adminProfile.getName() != null)
+                    ? adminProfile.getName()
+                    : "System Admin";
+
+            // 3. Gọi Service
+            adminService.sendManualNotification(senderName, request);
+
+            return ResponseEntity.ok(Collections.singletonMap("message", "Đã gửi thông báo thành công!"));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Collections.singletonMap("error", e.getMessage()));
+        }
     }
+
+    // (Nhớ copy hàm private getEmailFromIdToken xuống dưới cùng nếu chưa có)
     // Tạo môn học
     @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/subjects")
@@ -304,6 +328,32 @@ public class AdminController {
         response.put("message", "Tạo lớp học thành công");
 
         return ResponseEntity.ok(response);
+    }
+
+    private String getEmailFromIdToken(String idToken) {
+        try {
+            // 1. Kiểm tra null hoặc rỗng
+            if (idToken == null || idToken.isEmpty()) return null;
+
+            // 2. JWT có 3 phần: Header.Payload.Signature
+            // Chúng ta chỉ cần phần Payload (vị trí số 1) để lấy dữ liệu
+            String[] chunks = idToken.split("\\.");
+            if (chunks.length < 2) return null;
+
+            // 3. Decode Base64Url
+            Base64.Decoder decoder = Base64.getUrlDecoder();
+            String payload = new String(decoder.decode(chunks[1]));
+
+            // 4. Parse JSON thành Map để lấy key "email"
+            ObjectMapper mapper = new ObjectMapper();
+            Map<String, Object> claims = mapper.readValue(payload, Map.class);
+
+            return (String) claims.get("email");
+
+        } catch (Exception e) {
+            e.printStackTrace(); // In lỗi ra console nếu token bị sai format
+            return null;
+        }
     }
 }
 

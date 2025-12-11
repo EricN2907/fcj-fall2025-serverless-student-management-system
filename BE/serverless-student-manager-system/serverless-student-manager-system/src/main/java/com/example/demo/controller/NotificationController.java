@@ -27,33 +27,32 @@ public class NotificationController {
     private final CognitoIdentityProviderClient cognitoClient;
 
     @GetMapping
-    public ResponseEntity<?> getMyNotifications(@RequestHeader("Authorization") String authHeader) {
+    public ResponseEntity<?> getMyNotifications(
+            @RequestHeader("Authorization") String authHeader, // Spring Security check quyền
+            @RequestHeader(value = "user-idToken", required = true) String idToken // <--- Lấy Email nhanh từ đây
+    ) {
         try {
-            // 1. Lấy Email từ Token (Logic giống UserController)
-            String accessToken = authHeader.replace("Bearer ", "");
-            GetUserRequest getUserRequest = GetUserRequest.builder().accessToken(accessToken).build();
-            GetUserResponse userResponse = cognitoClient.getUser(getUserRequest);
-
-            String email = userResponse.userAttributes().stream()
-                    .filter(attr -> attr.name().equals("email"))
-                    .findFirst()
-                    .map(AttributeType::value)
-                    .orElse(null);
-
+            // 1. Giải mã Email từ ID Token (Nhanh, không cần gọi AWS)
+            String email = getEmailFromIdToken(idToken);
             if (email == null) {
-                return ResponseEntity.badRequest().body(Collections.singletonMap("error", "Invalid Token"));
+                return ResponseEntity.badRequest().body(Collections.singletonMap("error", "Token không hợp lệ"));
             }
 
-            // 2. Lấy Profile để biết ID thật (ví dụ: SE182088 hoặc GV01)
+            // 2. Lấy Profile (để lấy ID thật: SE123/GV456)
             UserDto myProfile = userService.getMyProfile(email);
-            String myId = myProfile.getId(); // SE182088
+            if (myProfile == null) {
+                return ResponseEntity.badRequest().body(Collections.singletonMap("error", "User not found"));
+            }
 
-            // 3. Gọi Service lấy thông báo
+            // Lấy ID: ví dụ SE1701
+            String myId = myProfile.getId();
+
+            // 3. Gọi Service
             List<SchoolItem> notiItems = schoolService.getNotifications(myId);
 
             // 4. Convert sang DTO
             List<NotificationDto> dtos = notiItems.stream().map(item -> NotificationDto.builder()
-                    .id(item.getSk()) // NOTI#2024...
+                    .id(item.getSk()) // NOTI#1723...
                     .title(item.getTitle())
                     .content(item.getContent())
                     .type(item.getType())
@@ -69,6 +68,21 @@ public class NotificationController {
 
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Collections.singletonMap("error", e.getMessage()));
+        }
+    }
+
+    // Hàm Helper giải mã token (Copy để dưới cùng Controller)
+    private String getEmailFromIdToken(String token) {
+        try {
+            String[] parts = token.split("\\.");
+            if (parts.length < 2) return null;
+            java.util.Base64.Decoder decoder = java.util.Base64.getUrlDecoder();
+            String payload = new String(decoder.decode(parts[1]));
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            java.util.Map<String, Object> claims = mapper.readValue(payload, java.util.Map.class);
+            return (String) claims.get("email");
+        } catch (Exception e) {
+            return null;
         }
     }
 }

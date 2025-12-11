@@ -8,6 +8,7 @@ import com.example.demo.dto.Lecturer.*;
 import com.example.demo.dto.Notification.CreateNotificationRequest;
 import com.example.demo.dto.Post.CreateCommentRequest;
 import com.example.demo.dto.Post.CreatePostRequest;
+import com.example.demo.dto.Post.PostDto;
 import com.example.demo.entity.SchoolItem;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -632,61 +633,93 @@ public class LecturerService {
     // 5. QUẢN LÝ BÀI VIẾT & BÌNH LUẬN
     // ========================================================================
 
-    /**
-     * Tạo bài viết trong lớp
-     */
-    public void createClassPost(String classId, String teacherCode, CreatePostRequest request) {
-        // 1. Validate quyền sở hữu lớp
+    // 1. HÀM TẠO BÀI VIẾT (Đã fix lỗi null ID)
+    public PostDto createClassPost(String classId, String teacherCode, CreatePostRequest request) {
         checkClassOwnership(classId, teacherCode);
 
         DynamoDbTable<SchoolItem> table = getTable();
         String postId = UUID.randomUUID().toString();
         String now = Instant.now().toString();
 
-        // 2. Tạo đối tượng Post
         SchoolItem post = new SchoolItem();
 
-        // --- KEYS ---
-        // PK = CLASS#... để gom bài viết theo lớp
+        // Key
         String classPk = classId.startsWith("CLASS#") ? classId : "CLASS#" + classId;
         post.setPk(classPk);
-
-        // SK = POST#UUID (Giống bên StudentService để thống nhất logic)
-        // Lưu ý: Code cũ bạn để POST#NOW, nhưng dùng UUID sẽ an toàn hơn cho các thao tác update/delete sau này
         post.setSk("POST#" + postId);
 
-        // GSI1 để query chi tiết bài viết hoặc lấy danh sách comment
         post.setGsi1Pk("POST#" + postId);
         post.setGsi1Sk("INFO");
 
-        // --- DATA ---
-        post.setPostId(postId); // ID tham chiếu
+        // Data
+        post.setPostId(postId);
+        post.setId(postId); // <--- QUAN TRỌNG: Lưu thêm field này để an toàn
+
         post.setClassId(classId);
         post.setTitle(request.getTitle());
         post.setContent(request.getContent());
 
-        // --- FILE LOGIC MỚI ---
-        // Không upload nữa, lấy thẳng link từ request
         if (request.getAttachmentUrl() != null && !request.getAttachmentUrl().isEmpty()) {
             post.setFileUrl(request.getAttachmentUrl());
         }
 
-        post.setUploadedBy(teacherCode); // Lưu mã GV
-        post.setSenderId("USER#" + teacherCode); // Lưu senderId chuẩn format để hiển thị avatar nếu cần
+        post.setUploadedBy(teacherCode);
+        post.setSenderId("USER#" + teacherCode);
         post.setCreatedAt(now);
-
-        // Mặc định cho các biến đếm
         post.setLikeCount(0);
         post.setCommentCount(0);
         post.setIsPinned(request.getPinned() != null ? request.getPinned() : false);
         post.setType("POST");
 
-        // 3. Lưu xuống DB
         table.putItem(post);
 
-        // TODO: Trigger Notification
+        return mapToPostDto(post);
     }
-    // --- LOGIC TẠO COMMENT ---
+
+    public List<PostDto> listPosts(String classId) {
+        DynamoDbTable<SchoolItem> table = getTable();
+        String pk = classId.startsWith("CLASS#") ? classId : "CLASS#" + classId;
+
+        QueryConditional qc = QueryConditional.sortBeginsWith(k ->
+                k.partitionValue(pk).sortValue("POST#")
+        );
+
+        return table.query(r -> r.queryConditional(qc))
+                .items().stream()
+                .map(this::mapToPostDto) // <--- Gọi hàm map vừa viết ở trên
+                // Sắp xếp bài mới nhất lên đầu
+                .sorted(Comparator.comparing(PostDto::getCreatedAt).reversed())
+                .collect(Collectors.toList());
+    }
+
+    private PostDto mapToPostDto(SchoolItem item) {
+        // 1. Xử lý ID an toàn (Tránh null)
+        String realId = item.getPostId(); // Ưu tiên 1
+        if (realId == null) realId = item.getId(); // Ưu tiên 2
+        if (realId == null && item.getSk().startsWith("POST#")) {
+            realId = item.getSk().replace("POST#", ""); // Ưu tiên 3 (Cắt từ SK)
+        }
+
+        // 2. Xử lý ID giảng viên (Cắt bỏ prefix USER# nếu có)
+        String cleanLecturerId = item.getUploadedBy();
+        if (cleanLecturerId == null && item.getSenderId() != null) {
+            cleanLecturerId = item.getSenderId().replace("USER#", "");
+        }
+
+        // 3. Build DTO
+        return PostDto.builder()
+                .id(realId)
+                .classId(item.getClassId())
+                .lecturerId(cleanLecturerId) // Map vào lecturerId
+                .title(item.getTitle())
+                .content(item.getContent())
+                .attachmentUrl(item.getFileUrl()) // Lưu ý: DB là fileUrl -> DTO là attachmentUrl
+                .isPinned(item.getIsPinned() != null ? item.getIsPinned() : false)
+                .likeCount(item.getLikeCount() != null ? item.getLikeCount() : 0)
+                .commentCount(item.getCommentCount() != null ? item.getCommentCount() : 0)
+                .createdAt(item.getCreatedAt())
+                .build();
+    }
 
     public void createComment(String postId, String senderId, CreateCommentRequest request) {
         DynamoDbTable<SchoolItem> table = getTable();

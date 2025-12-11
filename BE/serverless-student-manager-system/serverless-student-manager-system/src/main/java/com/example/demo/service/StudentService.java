@@ -672,9 +672,55 @@ public class StudentService {
         return entity.getLikeCount() != null ? entity.getLikeCount() : 0;
     }
 
-    // ========================= PRIVATE HELPERS =========================
+    public List<CommentDto> getCommentsByPost(String postId) {
+        DynamoDbTable<SchoolItem> table = table();
 
-    // [QUAN TRỌNG] Đã thêm hàm này để fix lỗi
+        // Query: PK = POST#<id>, SK bắt đầu bằng COMMENT#
+        QueryConditional condition = QueryConditional.sortBeginsWith(k ->
+                k.partitionValue("POST#" + postId)
+                        .sortValue("COMMENT#")
+        );
+
+        return table.query(r -> r.queryConditional(condition))
+                .items().stream()
+                .map(this::mapToCommentDto) // <--- Gọi hàm map chuẩn ở trên
+                .sorted(Comparator.comparing(CommentDto::getCreatedAt)) // Sắp xếp cũ -> mới
+                .collect(Collectors.toList());
+    }
+    // ========================= PRIVATE HELPERS =========================
+// Bạn copy hàm này để xuống dưới cùng file Service
+    private CommentDto mapToCommentDto(SchoolItem item) {
+        // 1. Xử lý ID
+        String realId = item.getId();
+        if (realId == null && item.getSk().startsWith("COMMENT#")) {
+            realId = item.getSk().replace("COMMENT#", "");
+        }
+
+        // 2. Xử lý Sender ID (Bỏ prefix USER#)
+        String cleanSenderId = item.getSenderId();
+        if (cleanSenderId != null) {
+            cleanSenderId = cleanSenderId.replace("USER#", "");
+        }
+
+        // 3. Build DTO
+        return CommentDto.builder()
+                .id(realId)
+                .postId(item.getPostId())
+                .classId(item.getClassId())
+                .parentId(item.getParentId()) // ID của comment cha (nếu có)
+
+                .content(item.getContent())
+                .attachmentUrl(item.getFileUrl()) // DB lưu là fileUrl, DTO là attachmentUrl
+
+                .senderId(cleanSenderId)
+                .studentName(item.getStudentName()) // Tên người bình luận
+                .avatar(item.getAvatar())           // Avatar người bình luận
+
+                .likeCount(item.getLikeCount() != null ? item.getLikeCount() : 0)
+                .createdAt(item.getCreatedAt())
+                .build();
+    }
+
     private ClassDto fetchClassDto(String classPk) {
         if (classPk == null) return null;
         Key key = Key.builder().partitionValue(classPk).sortValue("INFO").build();
@@ -802,24 +848,6 @@ public class StudentService {
                 .isPinned(item.getIsPinned())
                 .likeCount(item.getLikeCount())
                 .commentCount(item.getCommentCount())
-                .createdAt(item.getCreatedAt())
-                .build();
-    }
-
-    private CommentDto mapToCommentDto(SchoolItem item) {
-        String cleanId = item.getId();
-        if (cleanId == null && item.getSk() != null) {
-            cleanId = item.getSk().startsWith("COMMENT#") ? item.getSk().substring(8) : item.getSk();
-        }
-        return CommentDto.builder()
-                .id(cleanId)
-                .postId(item.getPostId())
-                .classId(item.getClassId())
-                .senderId(item.getSenderId())
-                .content(item.getContent())
-                .attachmentUrl(item.getFileUrl())
-                .parentId(item.getParentId())
-                .likeCount(item.getLikeCount())
                 .createdAt(item.getCreatedAt())
                 .build();
     }

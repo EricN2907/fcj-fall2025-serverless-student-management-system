@@ -15,6 +15,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper; // <--- Cần thêm để decode JSON
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -358,6 +359,28 @@ public class StudentController {
             return ResponseEntity.badRequest().body(Collections.singletonMap("error", e.getMessage()));
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body(Collections.singletonMap("error", e.getMessage()));
+        }
+    }
+    @GetMapping("/posts/{post_id}/comments")
+    @Operation(summary = "Get Comments", description = "SV xem danh sách bình luận của bài viết")
+    public ResponseEntity<?> getCommentsByPost(
+            @RequestHeader("Authorization") String authHeader, // Header bắt buộc
+            @PathVariable("post_id") String postId
+    ) {
+        try {
+            // Gọi Service
+            List<CommentDto> comments = studentService.getCommentsByPost(postId);
+
+            // Trả về
+            Map<String, Object> response = new HashMap<>();
+            response.put("status", HttpStatus.OK.value());
+            response.put("message", "Lấy danh sách bình luận thành công");
+            response.put("data", comments);
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Collections.singletonMap("error", e.getMessage()));
         }
     }
 }

@@ -12,6 +12,7 @@ import software.amazon.awssdk.enhanced.dynamodb.TableSchema;
 import software.amazon.awssdk.enhanced.dynamodb.model.QueryConditional;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -79,19 +80,24 @@ public class SchoolService {
                 .collect(Collectors.toList());
     }
     public List<SchoolItem> getNotifications(String userId) {
-        // PK = USER#GV01
-        String pk = userId.startsWith("USER#") ? userId : "USER#" + userId;
+        DynamoDbTable<SchoolItem> table = getTable();
 
-        // Query: Lấy tất cả item có SK bắt đầu bằng "NOTI#"
-        QueryConditional queryConditional = QueryConditional.sortBeginsWith(k ->
-                k.partitionValue(pk).sortValue("NOTI#"));
+        // 1. LẤY THÔNG BÁO RIÊNG (Bắt buộc phải có UserId mới lấy được cái này)
+        String pkUser = userId.startsWith("USER#") ? userId : "USER#" + userId;
+        QueryConditional userQc = QueryConditional.sortBeginsWith(k -> k.partitionValue(pkUser).sortValue("NOTI#"));
+        List<SchoolItem> userNotis = table.query(r -> r.queryConditional(userQc)).items().stream().collect(Collectors.toList());
 
-        List<SchoolItem> items = getTable().query(r -> r
-                        .queryConditional(queryConditional)
-                        .scanIndexForward(false)) // false = Mới nhất lên đầu (DESC)
-                .items().stream()
+        // 2. LẤY THÔNG BÁO HỆ THỐNG (Ai cũng lấy được cái này, không cần UserId)
+        QueryConditional systemQc = QueryConditional.sortBeginsWith(k -> k.partitionValue("NOTI#SYSTEM").sortValue("NOTI#"));
+        List<SchoolItem> systemNotis = table.query(r -> r.queryConditional(systemQc)).items().stream().collect(Collectors.toList());
+
+        // 3. GỘP LẠI & SẮP XẾP (Mới nhất lên đầu)
+        List<SchoolItem> allNotis = new ArrayList<>();
+        allNotis.addAll(userNotis);
+        allNotis.addAll(systemNotis);
+
+        return allNotis.stream()
+                .sorted(Comparator.comparing(SchoolItem::getCreatedAt).reversed())
                 .collect(Collectors.toList());
-
-        return items;
     }
 }

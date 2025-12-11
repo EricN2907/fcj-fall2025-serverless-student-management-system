@@ -426,39 +426,38 @@ public class AdminService {
     // ========================================================================
     // 4. API GỬI THÔNG BÁO THỦ CÔNG (MANUAL)
     // ========================================================================
-    public void sendManualNotification(String adminId, SendNotificationDto request) {
+    public void sendManualNotification(String senderName, SendNotificationDto request) {
         DynamoDbTable<SchoolItem> table = dynamoDbClient.table(tableName, TableSchema.fromBean(SchoolItem.class));
-        String userIdRaw = request.getUserId();
-        String targetPk = userIdRaw.startsWith("USER#") ? userIdRaw : "USER#" + userIdRaw;
+
+        String now = Instant.now().toString();
         SchoolItem notification = new SchoolItem();
-        notification.setPk(targetPk);
+
+        // --- LOGIC GỬI TOÀN HỆ THỐNG ---
+        // Nếu userId bị null, rỗng hoặc là "ALL" -> Lưu vào Hộp thư chung
+        if (request.getUserId() == null || request.getUserId().trim().isEmpty() || "ALL".equalsIgnoreCase(request.getUserId())) {
+            notification.setPk("NOTI#SYSTEM"); // <--- Key chung cho cả làng
+        } else {
+            // Gửi riêng cho 1 người
+            String userIdRaw = request.getUserId();
+            String targetPk = userIdRaw.startsWith("USER#") ? userIdRaw : "USER#" + userIdRaw;
+            notification.setPk(targetPk);
+        }
+        // -------------------------------
+
         notification.setSk("NOTI#" + System.currentTimeMillis());
         notification.setTitle(request.getTitle());
         notification.setContent(request.getContent());
-        String notiType = (request.getType() != null && !request.getType().isEmpty())
-                ? request.getType()
-                : "SYSTEM_ALERT";
-        notification.setType(notiType);
 
-        notification.setIsRead(false);
-        notification.setCreatedAt(LocalDateTime.now().toString());
+        // Mặc định type là SYSTEM_ALERT nếu gửi chung
+        notification.setType((request.getType() != null) ? request.getType() : "SYSTEM_ALERT");
 
-        // --- CÁC FIELD QUẢN TRỊ ---
-        notification.setSentBy(adminId); // Người gửi (Admin)
-        notification.setSentAt(LocalDateTime.now().toString());
+        notification.setIsRead(false); // Với thông báo chung, field này mang tính tượng trưng
+        notification.setCreatedAt(now);
+        notification.setSentBy(senderName);
+        notification.setSentAt(now);
 
-        // Xử lý ClassId (Mapping từ field ClassIs của DTO)
-        // Nếu có classId thì lưu, không thì để null
-        if (request.getClassId() != null && !request.getClassId().isEmpty()) {
-            // Tùy logic DB của bạn có cần prefix CLASS# hay không.
-            // Thường lưu ID tham chiếu thì để raw ID (VD: SE1701) hoặc full key tùy bạn quy ước.
-            // Ở đây mình giữ nguyên giá trị client gửi lên.
-            notification.setClassId(request.getClassId());
-        } else {
-            notification.setClassId(null);
-        }
+        if (request.getClassId() != null) notification.setClassId(request.getClassId());
 
-        // 3. Lưu xuống DynamoDB
         table.putItem(notification);
     }
 
