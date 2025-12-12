@@ -90,65 +90,305 @@ Hệ thống quản lý sinh viên serverless được xây dựng trên nền t
 | **Lecturer** | Quản lý lớp học, bài tập, chấm điểm, gửi thông báo |
 | **Student** | Đăng ký khóa học, nộp bài, xem điểm, nhận thông báo |
 
-## 🚀 Quick Start
+## 🏗️ Kiến trúc hệ thống
 
-### Backend
+### Tổng quan Architecture
+
+```
+                                    ┌─────────────────────────────────────────────────────────────┐
+                                    │                        AWS Cloud                            │
+                                    │  ┌─────────────────────────────────────────────────────┐   │
+                                    │  │                    VPC / Public Subnet               │   │
+┌──────────────┐                    │  │                                                      │   │
+│              │   HTTPS            │  │  ┌─────────────┐      ┌─────────────────────────┐   │   │
+│   Browser    │◄──────────────────►│  │  │ CloudFront  │─────►│     API Gateway         │   │   │
+│  (React App) │                    │  │  │    + WAF    │      │  (Cognito Authorizer)   │   │   │
+│              │                    │  │  └─────────────┘      └───────────┬─────────────┘   │   │
+└──────────────┘                    │  │         │                         │                 │   │
+       │                            │  │         ▼                         ▼                 │   │
+       │                            │  │  ┌─────────────┐      ┌─────────────────────────┐   │   │
+       │  Auth                      │  │  │   Route 53  │      │     Lambda Function     │   │   │
+       │                            │  │  │    (DNS)    │      │     (Spring Boot)       │   │   │
+       ▼                            │  │  └─────────────┘      └───────────┬─────────────┘   │   │
+┌──────────────┐                    │  │                                   │                 │   │
+│   Cognito    │◄───────────────────┤  │                                   │                 │   │
+│  User Pool   │   JWT Tokens       │  │                                   ▼                 │   │
+└──────────────┘                    │  │                       ┌─────────────────────────┐   │   │
+                                    │  │                       │       DynamoDB          │   │   │
+                                    │  │                       │   (Single Table Design) │   │   │
+                                    │  │                       └─────────────────────────┘   │   │
+                                    │  │                                   │                 │   │
+                                    │  │         ┌─────────────────────────┼─────────────┐   │   │
+                                    │  │         ▼                         ▼             │   │   │
+                                    │  │  ┌─────────────┐      ┌─────────────────────┐   │   │   │
+                                    │  │  │     S3      │      │    EventBridge      │   │   │   │
+                                    │  │  │  (Storage)  │      │  (Event Processing) │   │   │   │
+                                    │  │  └─────────────┘      └──────────┬──────────┘   │   │   │
+                                    │  │                                  │              │   │   │
+                                    │  │                                  ▼              │   │   │
+                                    │  │                       ┌─────────────────────┐   │   │   │
+                                    │  │                       │        SES          │   │   │   │
+                                    │  │                       │  (Email Service)    │   │   │   │
+                                    │  │                       └─────────────────────┘   │   │   │
+                                    │  └──────────────────────────────────────────────────┘   │
+                                    └─────────────────────────────────────────────────────────────┘
+```
+
+### Chi tiết các thành phần
+
+| Layer | Component | Mô tả |
+|-------|-----------|-------|
+| **Frontend** | React + TypeScript | Single Page Application với React Router |
+| **CDN** | CloudFront + WAF | Phân phối nội dung và bảo vệ ứng dụng |
+| **DNS** | Route 53 | Quản lý domain và routing |
+| **Auth** | Cognito | Xác thực JWT, quản lý user pools |
+| **API** | API Gateway | REST API với Cognito Authorizer |
+| **Compute** | Lambda | Serverless compute chạy Spring Boot |
+| **Database** | DynamoDB | NoSQL database với Single Table Design |
+| **Storage** | S3 | Lưu trữ file (avatar, assignments) |
+| **Events** | EventBridge | Xử lý sự kiện và scheduled tasks |
+| **Email** | SES | Gửi email thông báo |
+
+### Authentication Flow
+
+```
+┌──────────┐      ┌──────────┐      ┌──────────┐      ┌──────────┐
+│  User    │      │ Frontend │      │ Cognito  │      │   API    │
+└────┬─────┘      └────┬─────┘      └────┬─────┘      └────┬─────┘
+     │                 │                 │                 │
+     │  1. Login       │                 │                 │
+     │────────────────►│                 │                 │
+     │                 │  2. Auth Request│                 │
+     │                 │────────────────►│                 │
+     │                 │                 │                 │
+     │                 │  3. JWT Tokens  │                 │
+     │                 │◄────────────────│                 │
+     │                 │                 │                 │
+     │                 │  4. API Request + Bearer Token    │
+     │                 │──────────────────────────────────►│
+     │                 │                 │                 │
+     │                 │                 │  5. Validate    │
+     │                 │                 │◄────────────────│
+     │                 │                 │                 │
+     │                 │                 │  6. User Info   │
+     │                 │                 │────────────────►│
+     │                 │                 │                 │
+     │                 │  7. Response                      │
+     │                 │◄──────────────────────────────────│
+     │  8. Display     │                 │                 │
+     │◄────────────────│                 │                 │
+     │                 │                 │                 │
+```
+
+### Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                           Request Flow                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Client ──► CloudFront ──► API Gateway ──► Lambda ──► DynamoDB      │
+│                                │                         │           │
+│                                ▼                         ▼           │
+│                           Cognito                       S3           │
+│                         (Validate)                  (Files)          │
+│                                                                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                          Response Flow                               │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Client ◄── CloudFront ◄── API Gateway ◄── Lambda ◄── DynamoDB      │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## 🚀 Hướng dẫn cài đặt và chạy
+
+### Yêu cầu hệ thống
+
+| Yêu cầu | Phiên bản |
+|---------|-----------|
+| Java | 17+ |
+| Node.js | 18+ |
+| Maven | 3.x |
+| Docker | 20+ (optional) |
+| AWS CLI | 2.x (optional) |
+
+### Bước 1: Clone repository
+
 ```bash
+git clone https://gitlab.com/fcj-groups/serverless-student-management-system.git
+cd serverless-student-management-system
+```
+
+### Bước 2: Cấu hình AWS Services
+
+#### 2.1 Tạo Cognito User Pool
+1. Truy cập AWS Console → Cognito
+2. Tạo User Pool với các settings:
+   - Sign-in: Email
+   - Password policy: Minimum 8 characters
+   - MFA: Optional
+3. Tạo App Client (không có client secret)
+4. Lưu lại `User Pool ID` và `Client ID`
+
+#### 2.2 Tạo DynamoDB Table
+```bash
+aws dynamodb create-table \
+  --table-name StudentManagement \
+  --attribute-definitions \
+    AttributeName=PK,AttributeType=S \
+    AttributeName=SK,AttributeType=S \
+  --key-schema \
+    AttributeName=PK,KeyType=HASH \
+    AttributeName=SK,KeyType=RANGE \
+  --billing-mode PAY_PER_REQUEST \
+  --region ap-southeast-1
+```
+
+#### 2.3 Tạo S3 Bucket
+```bash
+aws s3 mb s3://student-management-files --region ap-southeast-1
+```
+
+### Bước 3: Chạy Backend
+
+```bash
+# Di chuyển vào thư mục backend
 cd BE/serverless-student-manager-system/serverless-student-manager-system
+
+# Tạo file cấu hình
+cp src/main/resources/application.properties.example src/main/resources/application.properties
+
+# Chỉnh sửa application.properties với thông tin AWS của bạn
+# aws.region=ap-southeast-1
+# aws.cognito.userPoolId=your-user-pool-id
+# aws.cognito.clientId=your-client-id
+# aws.dynamodb.tableName=StudentManagement
+# aws.s3.bucketName=student-management-files
+
+# Chạy ứng dụng
 ./mvnw spring-boot:run
 ```
-API sẽ chạy tại: http://localhost:8080
+
+Backend sẽ chạy tại: http://localhost:8080
 
 Swagger UI: http://localhost:8080/swagger-ui.html
 
-### Frontend
+### Bước 4: Chạy Frontend
+
 ```bash
+# Di chuyển vào thư mục frontend
 cd FE/serverless-student-management-system-front-end
+
+# Cài đặt dependencies
 npm install
+
+# Tạo file cấu hình
+cp .env.example .env
+
+# Chỉnh sửa .env với thông tin của bạn
+# VITE_COGNITO_USER_POOL_ID=your-user-pool-id
+# VITE_COGNITO_CLIENT_ID=your-client-id
+# VITE_COGNITO_REGION=ap-southeast-1
+# VITE_API_BASE_URL=http://localhost:8080
+
+# Chạy development server
 npm run dev
 ```
-App sẽ chạy tại: http://localhost:5173
 
-## 🐳 Docker
+Frontend sẽ chạy tại: http://localhost:5173
 
-### Build & Run Backend
+### Bước 5: Seed dữ liệu mẫu (Optional)
+
 ```bash
-cd BE/serverless-student-manager-system/serverless-student-manager-system
-docker build -t student-management-backend .
-docker run -p 8080:8080 student-management-backend
+cd BE/serverless-student-manager-system/serverless-student-manager-system/Database
+npm install
+node seed.js
 ```
 
-### Build & Run Frontend
+## 🐳 Chạy với Docker
+
+### Docker Compose (Recommended)
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  backend:
+    build: ./BE/serverless-student-manager-system/serverless-student-manager-system
+    ports:
+      - "8080:8080"
+    environment:
+      - AWS_REGION=ap-southeast-1
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    
+  frontend:
+    build: ./FE/serverless-student-management-system-front-end
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+```
+
+```bash
+# Chạy tất cả services
+docker-compose up -d
+
+# Xem logs
+docker-compose logs -f
+
+# Dừng services
+docker-compose down
+```
+
+### Chạy riêng từng service
+
+#### Backend
+```bash
+cd BE/serverless-student-manager-system/serverless-student-manager-system
+
+# Build image
+docker build -t student-management-backend .
+
+# Run container
+docker run -p 8080:8080 \
+  -e AWS_REGION=ap-southeast-1 \
+  -e AWS_ACCESS_KEY_ID=your-access-key \
+  -e AWS_SECRET_ACCESS_KEY=your-secret-key \
+  student-management-backend
+```
+
+#### Frontend
 ```bash
 cd FE/serverless-student-management-system-front-end
+
+# Build image
 docker build -t student-management-frontend .
+
+# Run container
 docker run -p 3000:3000 student-management-frontend
+```
+
+## 🧪 Testing
+
+### Backend Tests
+```bash
+cd BE/serverless-student-manager-system/serverless-student-manager-system
+./mvnw test
+```
+
+### Frontend Tests
+```bash
+cd FE/serverless-student-management-system-front-end
+npm run test
 ```
 
 ## 📖 Tài liệu chi tiết
 
 - [📘 Backend README](BE/serverless-student-manager-system/serverless-student-manager-system/README.md)
 - [📗 Frontend README](FE/serverless-student-management-system-front-end/README.md)
-
-## 🏗️ Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│    Frontend     │────▶│   API Gateway   │────▶│     Lambda      │
-│  (React + TS)   │     │  (Cognito Auth) │     │  (Spring Boot)  │
-└─────────────────┘     └─────────────────┘     └────────���────────┘
-        │                                               │
-        │                                               ▼
-        │                                       ┌───────────────┐
-        │                                       │   DynamoDB    │
-        │                                       └───────────────┘
-        │                                               │
-        ▼                                               ▼
-┌─────────────────┐                             ┌───────────────┐
-│  AWS Cognito    │                             │      S3       │
-│ (Auth + Users)  │                             │   (Storage)   │
-└─────────────────┘                             └───────────────┘
-```
 
 ## 👥 Đội ngũ phát triển
 

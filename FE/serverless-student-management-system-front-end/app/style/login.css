@@ -16,7 +16,8 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at center, #ffffff 0%, #f5f5f5 30%, #e8f1f5 60%, #7fa8bf 100%);
+  background: url('/background_login%20_page.jpg') no-repeat center center;
+  background-size: cover;
   padding: 20px;
   position: fixed;
   top: 0;
@@ -29,8 +30,9 @@ html, body {
 .login-wrapper {
   max-width: 440px;
   width: 100%;
-  background: linear-gradient(to bottom, #f0f0f0 0%, #ffffff 100%);
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 15px 40px rgba(0, 0, 0, 0.3);
   border-radius: 24px;
   overflow: hidden;
   position: relative;
