@@ -82,7 +82,7 @@ Hệ thống quản lý sinh viên serverless được xây dựng trên nền t
 | **ACM** | SSL/TLS certificates |
 | **CloudWatch** | Giám sát API Gateway và Lambda metrics |
 
-## 🔐 Roles & Permissions
+## Roles & Permissions
 
 | Role | Quyền hạn |
 |------|-----------|
@@ -90,7 +90,7 @@ Hệ thống quản lý sinh viên serverless được xây dựng trên nền t
 | **Lecturer** | Quản lý lớp học, bài tập, chấm điểm, gửi thông báo |
 | **Student** | Đăng ký khóa học, nộp bài, xem điểm, nhận thông báo |
 
-## 🏗️ Kiến trúc hệ thống
+## Kiến trúc hệ thống
 
 ### Tổng quan Architecture
 
